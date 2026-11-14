@@ -1,0 +1,165 @@
+import processing.serial.*;
+
+// --- Global Variables ---
+Serial serialPort;       
+PFont font;             
+
+int screenWidth = 800;
+int screenHeight = 450;      
+
+float radarRadius = 350; 
+float radarCenterX = screenWidth / 2; 
+float radarCenterY = screenHeight - 100; 
+
+int currentAngle = 0;
+int currentDistance = 0;
+
+ArrayList<PositionPoint> pointHistory = new ArrayList<PositionPoint>();
+
+// Simple data class to handle the trail history tracking
+class PositionPoint {
+  float x, y;
+  int age;
+  PositionPoint(float x, float y) {
+    this.x = x;
+    this.y = y;
+    this.age = 255;
+  }
+}
+
+void setup() {
+  size(800, 450); // Hardcoded numbers are required by Processing Java setup
+  smooth(); 
+  font = createFont("Monospaced", 20);
+  textFont(font);
+  
+  println("Available Serial Ports:");
+  printArray(Serial.list());
+  
+  // !!! Change this to match the exact COM port your Arduino uploaded on !!!
+  String portName = "COM5"; 
+  
+  try {
+    println("Connecting to port: " + portName);
+    serialPort = new Serial(this, portName, 9600);
+    serialPort.clear();
+  } catch (Exception e) {
+    println("Error opening serial port: " + e.getMessage());
+    exit();
+  }
+}
+
+void draw() {
+  background(0, 20, 0);
+  drawRadarGrid();
+  drawTextLabels();
+  drawSweepLine(currentAngle);
+  drawDetectedPoints();
+  updateAndDrawHistory();
+}
+
+void drawRadarGrid() {
+  stroke(0, 150, 0);
+  noFill();
+  strokeWeight(2);
+  
+  for (int i = 1; i <= 2; i++) {
+    float radius = i * (radarRadius / 2.0);
+    arc(radarCenterX, radarCenterY, radius * 2, radius * 2, PI, TWO_PI);
+  }
+  
+  line(radarCenterX - radarRadius, radarCenterY, radarCenterX + radarRadius, radarCenterY);
+  
+  for (int i = 0; i < 5; i++) {
+    float angle = radians((i * 45) - 180);
+    float x2 = radarCenterX + radarRadius * cos(angle);
+    float y2 = radarCenterY + radarRadius * sin(angle);
+    line(radarCenterX, radarCenterY, x2, y2);
+  }
+}
+
+void drawTextLabels() {
+  fill(0, 200, 0);
+  noStroke();
+  
+  for (int i = 1; i <= 2; i++) {
+    float radiusText = i * (radarRadius / 2.0);
+    text((i * 10) + " cm", radarCenterX + radiusText + 5, radarCenterY - 5);
+  }
+  
+  text("Angle: " + currentAngle + " deg", 20, 40);
+  text("Distance: " + currentDistance + " cm", 20, 70);
+  text("Radar Display", width / 2 - 80, 40);
+}
+
+void drawSweepLine(int angle) {
+  stroke(0, 255, 0, 150);
+  strokeWeight(3);
+  float radAngle = radians(angle - 180);
+  float endX = radarCenterX + radarRadius * cos(radAngle);
+  float endY = radarCenterY + radarRadius * sin(radAngle);
+  line(radarCenterX, radarCenterY, endX, endY);
+}
+
+void drawDetectedPoints() {
+  float maxDist = 40.0;
+  if (currentDistance > 0 && currentDistance < maxDist) {
+    stroke(255, 0, 0);
+    strokeWeight(5);
+    float radAngle = radians(currentAngle - 180);
+    float mappedDist = map(currentDistance, 0, maxDist, 0, radarRadius);
+    float pointX = radarCenterX + mappedDist * cos(radAngle);
+    float pointY = radarCenterY + mappedDist * sin(radAngle);
+    point(pointX, pointY);
+    pointHistory.add(new PositionPoint(pointX, pointY));
+  }
+}
+
+void updateAndDrawHistory() {
+  for (int i = pointHistory.size() - 1; i >= 0; i--) {
+    PositionPoint p = pointHistory.get(i);
+    stroke(0, p.age, 0);
+    strokeWeight(4);
+    point(p.x, p.y);
+    p.age -= 2;
+    if (p.age <= 0) {
+      pointHistory.remove(i);
+    }
+  }
+}
+
+// Native Java Serial Event Listener
+void serialEvent(Serial port) {
+  try {
+    // FIXED: Read until the dot '.' since that's what your Arduino prints
+    String inString = port.readStringUntil('.');
+    
+    if (inString != null) {
+      // Remove the trailing dot and any hidden spaces
+      inString = trim(inString);
+      if (inString.endsWith(".")) {
+        inString = inString.substring(0, inString.length() - 1);
+      }
+      inString = trim(inString);
+      
+      // Split into [angle, distance]
+      String[] values = split(inString, ',');
+      
+      if (values != null && values.length == 2) {
+        // Strip non-numeric characters just in case of noise
+        String cleanAngle = values[0].replaceAll("[^0-9-]", "");
+        String cleanDist = values[1].replaceAll("[^0-9-]", "");
+        
+        if (!cleanAngle.equals("") && !cleanDist.equals("")) {
+          currentAngle = int(cleanAngle);
+          currentDistance = int(cleanDist);
+          
+          // Debug print to confirm clean tracking data
+          println("Tracking -> Angle: " + currentAngle + "° | Distance: " + currentDistance + " cm");
+        }
+      }
+    }
+  } catch (Exception e) {
+    // Silently ignore rare packet drops
+  }
+}
